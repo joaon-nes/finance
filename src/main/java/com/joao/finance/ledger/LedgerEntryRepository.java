@@ -1,4 +1,4 @@
-package com.joao.finance.Ledger;
+package com.joao.finance.ledger;
 
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -15,9 +15,9 @@ public interface LedgerEntryRepository extends JpaRepository<LedgerEntry, UUID>{
 
     // consulta a mão com @Query quando o método falha
     // JPL usa o nome da CLASSE (LedgerEntry) e dos CAMPOS Java (amountCents) e não nomes da tabela e das colunas SQL
-    // sum(...) soma valores; coalesce(x, OL) troca null por 0 (soma de uma conta sem lançamentos é null)
+    // sum(...) soma valores; coalesce(x, 0L) troca null por 0 (soma de uma conta sem lançamentos é null)
     // ":accountId" é um parâmetro nomeado, liga ao argumento do método que tem o mesmo nome
     // confere o saldo em cache da conta contra a verdade do ledger
-    @Query("select coalesce(sum(e.amountCents), OL) from LedgerEntry e where e.account.id = :accountId")
+    @Query("select coalesce(sum(e.amountCents), 0L) from LedgerEntry e where e.account.id = :accountId")
     long sumByAccountId(UUID accountId);
 }

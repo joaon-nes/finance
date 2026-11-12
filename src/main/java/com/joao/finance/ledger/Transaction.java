@@ -1,4 +1,4 @@
-package com.joao.finance.Ledger;
+package com.joao.finance.ledger;
 
 import com.joao.finance.user.User;
 import jakarta.persistence.*;
