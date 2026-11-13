@@ -94,7 +94,7 @@ public class TransferService {
     private Transaction doTransfer (Command cmd) {
         // busca pelo id e pelo dono, conta de outro usuário finge que não existe
         Account from = accountRepository.findByIdAndUserId(cmd.fromAccountId(), cmd.userId()).orElseThrow(() -> new NotFoundException("Conta de origem não encontrada"));
-        Account to = accountRepository.findByIdAndUserId(cmd.fromAccountId(), cmd.userId()).orElseThrow(() -> new NotFoundException("Conta de destino não encontrada"));
+        Account to = accountRepository.findByIdAndUserId(cmd.toAccountId(), cmd.userId()).orElseThrow(() -> new NotFoundException("Conta de destino não encontrada"));
         
         if (!from.isActive() || !to.isActive()) {
             throw new BusinessException("Não é possível transferir com conta invativa");
