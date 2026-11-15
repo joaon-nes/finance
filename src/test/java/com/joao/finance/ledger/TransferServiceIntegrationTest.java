@@ -21,6 +21,13 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+
+import java.util.ArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+
 // TESTE DE INTEGRAÇÃO: sobe a aplicação inteira (Spring + Hibernate + Flyway) contra um
 // PostgreSQL real, em vez de testar uma classe isolada com dados falsos
 // @SpringBootTest sobe o contexto do Spring; @Import(...) traz o contêiner descartável da TestcontainersConfiguration. O Docker Desktop precisa estar aberto
@@ -43,7 +50,7 @@ class TransferServiceIntegrationTest {
     // Garante que cada teste começa com o banco vazio, sem depender da ordem de execução.
     // A ordem de apagar importa: primeiro quem tem chave estrangeira (lançamentos), por último quem é referenciado (usuários).
     @BeforeEach
-    void setUp() {
+    void setUp () {
         ledgerEntryRepository.deleteAll();
         transactionRepository.deleteAll();
         accountRepository.deleteAll();
@@ -76,7 +83,7 @@ class TransferServiceIntegrationTest {
  
     // Nome do teste descreve o cenário e resultado esperado
     @Test
-    void transferenciaValida_movimentaSaldosEMantemOLedgerConsistente() {
+    void transferenciaValida_movimentaSaldosEMantemOLedgerConsistente () {
         deposit(checkingId, 100_000);
  
         Transaction tx = transferService.transfer(command(30_000, null));
@@ -97,7 +104,7 @@ class TransferServiceIntegrationTest {
     }
  
     @Test
-    void saldoInsuficiente_recusaENadaEGravado() {
+    void saldoInsuficiente_recusaENadaEGravado () {
         deposit(checkingId, 10_000);
  
         // assertThatThrownBy executa o código e confirma que ele lançou a exceção esperada
@@ -113,7 +120,7 @@ class TransferServiceIntegrationTest {
     }
  
     @Test
-    void mesmaChaveDeIdempotencia_debitaUmaSoVez() {
+    void mesmaChaveDeIdempotencia_debitaUmaSoVez () {
         deposit(checkingId, 100_000);
  
         Transaction first = transferService.transfer(command(30_000, "chave-123"));
@@ -124,5 +131,53 @@ class TransferServiceIntegrationTest {
         assertThat(balanceOf(checkingId)).isEqualTo(70_000); // debitou só uma vez
         assertThat(balanceOf(savingsId)).isEqualTo(30_000);
         assertThat(transactionRepository.count()).isEqualTo(2); // depósito + 1 transferência
+    }
+
+    @Test
+    void transferenciasSimultaneas_naoCorrompemOSaldo () throws Exception {
+        deposit (checkingId, 100_000);
+
+        int threads = 10;
+        // pool de threads: 10 usuários executando transferências simultaneamente
+        ExecutorService pool = Executors.newFixedThreadPool(threads);
+        // countdownlatch é onde inicia: threads esperam no start.await() até start.countDown() para começarem juntas
+        CountDownLatch ready = new CountDownLatch(threads);
+        CountDownLatch start = new CountDownLatch(1);
+
+        // future representa o resultado de uma tarefa que ainda está rodando em outra thread
+        // cada tarefa devolve true (transferiu) ou false (alguma regra de negócio negou)
+        List<Future<Boolean>> results = new ArrayList<> ();
+        for (int i = 0; i < threads; i++) {
+            results.add(pool.submit(() -> {
+                ready.countDown();
+                start.await();
+                try {
+                    transferService.transfer(command(20_000, null));
+                    return true;
+                } catch (BusinessException e) {
+                    return false; // saldo insuficiente ou conta em uso após tentativas
+                }
+            }));
+        }
+        ready.await();
+        start.countDown();
+
+        int succeeded = 0;
+        for (Future<Boolean> f : results) {
+            // get() espera tarefa terminar
+            // qualquer outra exceção (não BusinessException) sobe daqui e faz teste falhar
+            if (f.get()) {
+                succeeded++;
+            }
+        }
+        pool.shutdown();
+
+        // não da pra ver quantas transferências passam (depende quem vence disputa e quantas tentativas sobram), teste verifica invariantes que
+        // valem sempre ao menos uma passou, nunca mais de 5 (100_000 / 20_000) e nenhum dinheiro foi criado ou perdido
+        assertThat(succeeded).isBetween(1, 5);
+        assertThat(balanceOf(checkingId)).isEqualTo(100_000 - succeeded * 20_000L);
+        assertThat(balanceOf(savingsId)).isEqualTo(succeeded * 20_000L);
+        assertThat(ledgerEntryRepository.sumByAccountId(checkingId)).isEqualTo(balanceOf(checkingId));
+        assertThat(ledgerEntryRepository.sumByAccountId(savingsId)).isEqualTo(balanceOf(savingsId));
     }
 }
