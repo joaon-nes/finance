@@ -54,7 +54,7 @@ public class LedgerEntry {
     }
 
     public UUID getId() {return id;}
-    public Transaction geTransaction () {return transaction;}
+    public Transaction getTransaction () {return transaction;}
     public Account getAccount () {return account;}
     public long getAmountCents() {return amountCents;}
     public String getExternalHash() {return externalHash;}

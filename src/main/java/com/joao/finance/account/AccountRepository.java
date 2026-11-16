@@ -17,4 +17,8 @@ public interface AccountRepository extends JpaRepository<Account, UUID> {
     // busca conta pelço id E pelo dono na mesma consulta
     // sempre usar este em vez de findById em endpoints, se usuário trocar o id na url por o de outro user, nada é encontrado (Optional vazio) em vez de vazar conta alheia
     Optional<Account> findByIdAndUserId(UUID id, UUID userId);
+
+    // existsBy gera um SELECT que só confere se existe (devolve boolean)
+    // usado para recusar nome repetido com mensagem clara antes do INSERT não filtra por active: o UNIQUE (user_id, name) do banco vale também para contas desativadas
+    boolean existsByUserIdAndName(UUID userId, String name);
 }

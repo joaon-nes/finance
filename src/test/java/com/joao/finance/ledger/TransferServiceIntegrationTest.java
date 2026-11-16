@@ -173,7 +173,7 @@ class TransferServiceIntegrationTest {
         pool.shutdown();
 
         // não da pra ver quantas transferências passam (depende quem vence disputa e quantas tentativas sobram), teste verifica invariantes que
-        // valem sempre ao menos uma passou, nunca mais de 5 (100_000 / 20_000) e nenhum dinheiro foi criado ou perdido
+        // valem sempre: ao menos uma passou, nunca mais de 5 (100_000 / 20_000) e nenhum dinheiro foi criado ou perdido
         assertThat(succeeded).isBetween(1, 5);
         assertThat(balanceOf(checkingId)).isEqualTo(100_000 - succeeded * 20_000L);
         assertThat(balanceOf(savingsId)).isEqualTo(succeeded * 20_000L);
