@@ -2,7 +2,7 @@
 
 Gestor financeiro pessoal: API REST em Java e Spring Boot para controle de contas, lançamentos e transferências entre as próprias contas, construída em torno de um **ledger (livro-razão) append-only** sobre PostgreSQL.
 
-> **Status:** em desenvolvimento. O núcleo de dados e o serviço de transferência já estão implementados e testados com banco real; a API HTTP e a autenticação ainda estão no roadmap. Este repositório é um projeto de estudo e portfólio.
+> **Status:** em desenvolvimento. O núcleo de dados, o serviço de transferência e os endpoints de contas e extrato paginado já estão implementados e testados com banco real; o tratamento global de erros, os lançamentos de receitas/despesas e a autenticação vêm nas próximas etapas. Este repositório é um projeto de estudo e portfólio.
 
 ## Objetivos do projeto
 
@@ -41,14 +41,18 @@ Estrutura atual do código:
 ```
 src/main/java/com/joao/finance/
 ├── FinanceApplication.java
-├── user/       User, UserRepository
-├── account/    Account, AccountRepository
-├── ledger/     Transaction, LedgerEntry, TransferService e os repositories
-└── common/     BusinessException, NotFoundException
+├── user/       User, UserRepository, CurrentUserProvider (temporário até o JWT)
+├── account/    Account, AccountRepository, AccountService, AccountController,
+│               CreateAccountRequest, AccountResponse
+├── ledger/     Transaction, LedgerEntry, repositories, TransferService,
+│               StatementService, StatementController, StatementEntryResponse
+└── common/     BusinessException, NotFoundException, PageResponse
 
 src/test/java/com/joao/finance/
 ├── TestcontainersConfiguration.java
-└── ledger/TransferServiceIntegrationTest.java
+└── ledger/
+    ├── TransferServiceIntegrationTest.java
+    └── StatementServiceIntegrationTest.java
 ```
 
 ## Modelo de dados
@@ -64,7 +68,22 @@ Principais decisões:
 - **Idempotência** por `idempotency_key` e deduplicação de importações por `external_hash`, ambas garantidas por constraints `UNIQUE` no banco.
 - **UUID** como chave primária, `TIMESTAMPTZ` para instantes e `DATE` para datas de negócio.
 
-## Regras implementadas: transferência entre contas
+## Regras implementadas
+
+### Contas e extrato paginado
+
+- Criação de contas (`CHECKING`, `SAVINGS`, `CREDIT_CARD`, `CASH`) sempre com saldo inicial zero e validação de nome único por usuário.
+- Listagem de contas ativas e consulta individual filtradas pelo dono da conta (conta de outro usuário responde como não encontrada).
+- Extrato paginado ordenado do lançamento mais recente para o mais antigo, com carregamento conjunto da transação (`@EntityGraph` para evitar N+1), limite máximo de página (`max-page-size=100`) e descarte de parâmetros `sort` externos.
+
+| Método | Rota | Descrição |
+|---|---|---|
+| `POST` | `/api/accounts` | Cria uma conta (`201 Created` + header `Location`) |
+| `GET` | `/api/accounts` | Lista as contas ativas do usuário |
+| `GET` | `/api/accounts/{accountId}` | Busca uma conta do usuário |
+| `GET` | `/api/accounts/{accountId}/statement?page=0&size=20` | Extrato paginado da conta |
+
+### Transferência entre contas
 
 O `TransferService` move dinheiro entre contas do mesmo usuário, como registro de controle (não há integração bancária). Para cada transferência:
 
@@ -77,12 +96,19 @@ O `TransferService` move dinheiro entre contas do mesmo usuário, como registro 
 
 ## Testes
 
-Os testes de integração sobem um **PostgreSQL real em contêiner descartável** (Testcontainers), com o schema criado pelo Flyway, sem tocar no banco de desenvolvimento. Cenários cobertos hoje:
+Os testes de integração sobem um **PostgreSQL real em contêiner descartável** (Testcontainers), com o schema criado pelo Flyway, sem tocar no banco de desenvolvimento. Cenários cobertos hoje (9 testes):
 
-- transferência válida: saldos corretos, saldo em cache igual à soma do ledger e lançamentos que somam zero;
-- saldo insuficiente: a transferência é recusada e nada é gravado;
-- mesma chave de idempotência repetida: o débito acontece uma única vez;
-- transferências simultâneas (10 threads na mesma conta): nenhum dinheiro é criado ou perdido e o saldo em cache continua igual ao ledger.
+- **Transferências (`TransferServiceIntegrationTest`):**
+  - transferência válida: saldos corretos, saldo em cache igual à soma do ledger e lançamentos que somam zero;
+  - saldo insuficiente: a transferência é recusada e nada é gravado;
+  - mesma chave de idempotência repetida: o débito acontece uma única vez;
+  - transferências simultâneas (10 threads na mesma conta): nenhum dinheiro é criado ou perdido e o saldo em cache continua igual ao ledger.
+- **Extrato (`StatementServiceIntegrationTest`):**
+  - paginação com cálculo de total de elementos e páginas;
+  - ordenação do mais recente para o mais antigo com dados da transação;
+  - descarte de parâmetros `sort` enviados pelo cliente;
+  - bloqueio de acesso a conta de outro usuário (`NotFoundException`);
+  - carregamento da `Transaction` no mesmo `SELECT` via `@EntityGraph`.
 
 ```bash
 ./mvnw test        # no Windows PowerShell: .\mvnw test (o Docker precisa estar aberto)
@@ -107,7 +133,7 @@ Os testes de integração sobem um **PostgreSQL real em contêiner descartável*
    ./mvnw spring-boot:run      # no Windows PowerShell: .\mvnw spring-boot:run
    ```
 
-3. A aplicação sobe em `http://localhost:8080`. Ainda não há endpoints HTTP.
+3. A aplicação sobe em `http://localhost:8080`.
 
 Para recriar o banco do zero (apaga os dados): `docker compose down -v && docker compose up -d`.
 
@@ -122,13 +148,13 @@ Para recriar o banco do zero (apaga os dados): `docker compose down -v && docker
 - [x] Entidades `User`, `Account`, `Transaction` e `LedgerEntry` e seus repositories
 - [x] Exceções de negócio (`BusinessException`, `NotFoundException`)
 - [x] `TransferService`: transação, lock otimista com retry e idempotência
-- [x] Testes de integração com Testcontainers (4 cenários, incluindo transferências simultâneas)
+- [x] `AccountService`, `StatementService` e endpoints de contas e extrato paginado
+- [x] Testes de integração com Testcontainers (9 cenários em `TransferService` e `StatementService`)
 - [x] Repositório versionado no GitHub
 
 ### Próximos passos: MVP do backend
 
-- [ ] `AccountService` e endpoints de contas (criar, listar e extrato paginado)
-- [ ] DTOs, validação (Bean Validation) e tratamento global de erros (`@RestControllerAdvice`)
+- [ ] DTOs, validação (Bean Validation), endpoint de transferências e tratamento global de erros (`@RestControllerAdvice`)
 - [ ] Registro de receitas e despesas
 - [ ] Estorno de transações
 - [ ] Autenticação e autorização (Spring Security + JWT)
